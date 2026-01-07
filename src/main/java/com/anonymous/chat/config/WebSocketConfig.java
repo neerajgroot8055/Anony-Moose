@@ -22,7 +22,8 @@ public class WebSocketConfig implements WebSocketConfigurer {
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry
                 .addHandler(chatWebSocketHandler, "/ws")
-                .setAllowedOrigins("*"); // allow frontend connections
+                .setAllowedOrigins("http://localhost:5173");
     }
 }
+
 

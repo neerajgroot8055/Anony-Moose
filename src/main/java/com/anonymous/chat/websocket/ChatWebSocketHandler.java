@@ -117,7 +117,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
 
-    private void handleSkipOrEnd(String sessionId) {
+    private synchronized void handleSkipOrEnd(String sessionId) {
+
         String roomId = sessionToRoom.remove(sessionId);
         if (roomId == null) return;
 
@@ -130,13 +131,15 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             sessionToRoom.remove(partnerId);
             sendSystemMessage(partnerId, "Stranger skipped the chat");
 
-            waitingQueue.add(partnerId);
+            // partner can be re-queued
+            if (!waitingQueue.contains(partnerId)) {
+                waitingQueue.add(partnerId);
+            }
         }
 
-        waitingQueue.add(sessionId);
-
-        tryMatch(sessionId);
+        // IMPORTANT: do NOT requeue self immediately
     }
+
     private void blockSession(String blockedSessionId) {
         blockedSessions.add(blockedSessionId);
 
