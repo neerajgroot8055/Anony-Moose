@@ -1,5 +1,7 @@
 package com.anonymous.chat.websocket;
 
+import io.jsonwebtoken.Claims;
+import com.anonymous.chat.config.JwtUtil;
 import com.anonymous.chat.websocket.dto.SystemMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
@@ -22,6 +24,35 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     // blocked sessionIds
     private final Set<String> blockedSessions = ConcurrentHashMap.newKeySet();
+    private final JwtUtil jwtUtil;
+    private Claims authenticate(WebSocketSession session) {
+        try {
+            String query = session.getUri().getQuery();
+            if (query == null) return null;
+
+            String token = null;
+
+            for (String param : query.split("&")) {
+                String[] pair = param.split("=");
+                if (pair.length == 2 && pair[0].equals("token")) {
+                    token = pair[1];
+                    break;
+                }
+            }
+
+            if (token == null) return null;
+
+            return jwtUtil.validateToken(token);
+
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+
+    public ChatWebSocketHandler(JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
 
     // limits (MVP)
     private static final int MAX_REPORTS = 3;
@@ -47,18 +78,32 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        String sessionId = session.getId();
-        if (blockedSessions.contains(session.getId())) {
+
+        System.out.println("WS OPENED: " + session.getId());
+
+        Claims claims = authenticate(session);
+
+        if (claims == null) {
+            System.out.println("JWT AUTH FAILED — closing socket");
             session.close();
-            return;
+            return; // 🔑 THIS LINE IS CRITICAL
         }
 
-        sessions.put(sessionId, session);
+        String userId = claims.getSubject();
+        String username = claims.get("username", String.class);
 
-        System.out.println("Connected: " + sessionId);
+        session.getAttributes().put("userId", userId);
+        session.getAttributes().put("username", username);
 
-        tryMatch(sessionId);
+        sessions.put(session.getId(), session);
+
+        System.out.println("Authenticated WS user: " + username);
+
+        waitingQueue.add(session.getId());
+        tryMatch(session.getId());
     }
+
+
     private boolean isRateLimited(String sessionId) {
         long now = System.currentTimeMillis();
         Long lastTime = lastMessageTime.get(sessionId);
@@ -147,6 +192,10 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        if (!session.getAttributes().containsKey("userId")) {
+            return;
+        }
+
         String sessionId = session.getId();
 
         if (blockedSessions.contains(sessionId)) {
